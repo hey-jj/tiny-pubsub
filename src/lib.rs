@@ -284,20 +284,32 @@ impl<D> PubSub<D> {
         true
     }
 
-    /// Run every delivery queued by [`PubSub::publish`], in order.
+    /// Run the deliveries queued by [`PubSub::publish`] so far, in call order.
     ///
-    /// This stands in for an event loop tick. Until you call it, deferred
-    /// subscribers do not run.
+    /// This stands in for one event loop tick. It drains the jobs queued before
+    /// the call. A subscriber that publishes during the drain queues its job for
+    /// the next call, not this one. Call again to drain those.
+    ///
+    /// Under delayed exceptions a panicking subscriber does not stop the other
+    /// jobs in the batch. Every job runs, then the first panic is re-raised
+    /// after the batch drains. Under immediate exceptions the first panic
+    /// propagates at once and the rest of the batch does not run.
     pub fn process_deferred(&self) {
-        loop {
-            let job = {
-                let mut inner = self.inner.borrow_mut();
-                if inner.deferred.is_empty() {
-                    break;
+        let batch = std::mem::take(&mut self.inner.borrow_mut().deferred);
+        let mut held_panic: Option<Box<dyn std::any::Any + Send>> = None;
+        for job in batch {
+            if job.immediate_exceptions {
+                self.deliver(&job.message, &job.data, true);
+            } else if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {
+                self.deliver(&job.message, &job.data, false);
+            })) {
+                if held_panic.is_none() {
+                    held_panic = Some(panic);
                 }
-                inner.deferred.remove(0)
-            };
-            self.deliver(&job.message, &job.data, job.immediate_exceptions);
+            }
+        }
+        if let Some(panic) = held_panic {
+            std::panic::resume_unwind(panic);
         }
     }
 
