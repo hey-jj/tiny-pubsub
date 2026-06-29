@@ -8,7 +8,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tiny_pubsub::Token;
 
-/// Monotonic unique topic/data string, matching the source test helper.
+/// Monotonic unique topic/data string.
 ///
 /// Returns `"my unique String number N"`. Useful when several tests share one
 /// bus, though most tests here use a fresh bus and do not need it.
@@ -76,8 +76,7 @@ impl Spy {
 
 /// Assert that a non-empty token list holds only distinct tokens.
 ///
-/// Mirrors the source test helper: the list must be non-empty and every pair
-/// must differ.
+/// The list must be non-empty and every pair must differ.
 pub fn assert_all_tokens_different(tokens: &[Token]) {
     assert!(!tokens.is_empty(), "token list must be non-empty");
     for (j, a) in tokens.iter().enumerate() {

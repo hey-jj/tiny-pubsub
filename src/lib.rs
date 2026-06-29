@@ -103,8 +103,8 @@ impl<D> Topic<D> {
 
 /// Mutable state shared behind a [`RefCell`].
 struct Inner<D> {
-    /// Topic name to its subscriber list. Insertion-ordered to match the
-    /// source library's key-iteration order.
+    /// Topic name to its subscriber list. Insertion-ordered so delivery and
+    /// iteration order stay stable.
     topics: Vec<(String, Topic<D>)>,
     /// Monotonic token counter. Starts at -1 so the first token is `uid_0`.
     last_uid: i64,
@@ -419,8 +419,8 @@ impl<D> PubSub<D> {
     /// Count subscribers in the first registered topic whose name starts with
     /// `topic`, then stop.
     ///
-    /// This counts one topic, not the sum across the hierarchy. It mirrors the
-    /// source library, which breaks after the first prefix match.
+    /// This counts one topic, not the sum across the hierarchy. It stops at the
+    /// first prefix match and returns that topic's subscriber count.
     #[must_use]
     pub fn count_subscriptions(&self, topic: &str) -> usize {
         let inner = self.inner.borrow();

@@ -22,8 +22,7 @@ fn clear_all_removes_every_subscription() {
     assert!(!spy2.called());
 }
 
-// clear_subscriptions prefix-deletes by raw string prefix. The source library
-// has no direct test for this, so pin it here.
+// clear_subscriptions prefix-deletes by raw string prefix. Pin that behavior.
 #[test]
 fn clear_subscriptions_prefix_deletes() {
     let bus: PubSub<String> = PubSub::new();

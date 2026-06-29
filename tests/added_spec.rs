@@ -1,6 +1,6 @@
-//! Behavior the source suite leaves untested but the contract requires:
-//! original-message argument, wildcard ordering, once re-entrancy, delivery
-//! order, edge topics, and a reference-checked hierarchy property.
+//! Extra contract guarantees: original-message argument, wildcard ordering,
+//! once re-entrancy, delivery order, edge topics, and a checked hierarchy
+//! property.
 
 mod common;
 

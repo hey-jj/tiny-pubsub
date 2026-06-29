@@ -23,9 +23,7 @@ fn counts_two_subscriptions_on_same_topic() {
 }
 
 // count_subscriptions counts only the first topic whose name matches the
-// prefix, then stops. It does not sum across the hierarchy. This mirrors the
-// source, which breaks after the first match. The source suite never exercises
-// this, so pin it here.
+// prefix, then stops. It does not sum across the hierarchy. Pin that behavior.
 #[test]
 fn counts_only_first_prefix_matching_topic_then_stops() {
     let bus: PubSub<String> = PubSub::new();

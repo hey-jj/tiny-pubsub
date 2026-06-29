@@ -77,8 +77,8 @@ fn calls_subscribers_with_data_as_second_argument() {
     assert!(spy.called_with("topic", "the data"));
 }
 
-// Deferred publish is the analogue of the source's async delivery. Nothing
-// fires until process_deferred, which stands in for the fake clock tick.
+// Deferred publish queues work instead of running it. Nothing fires until
+// process_deferred, which stands in for one event loop tick.
 #[test]
 fn publish_is_deferred() {
     let bus: PubSub<String> = PubSub::new();

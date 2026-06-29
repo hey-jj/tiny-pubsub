@@ -1,10 +1,8 @@
 //! Subscribe behavior: token shape and uniqueness.
 //!
-//! The source suite also checks that a non-function subscriber returns false
-//! and that publishing past such a registration does not throw. Rust's type
-//! system makes a non-callable subscriber impossible to pass, so those two
-//! cases have no analogue here. The intent they protect, that a topic with no
-//! valid subscriber does not panic on publish, is covered in publish.rs by
+//! Rust's type system rejects a non-callable subscriber at compile time, so
+//! there is no runtime case for passing one. The guarantee that a topic with no
+//! valid subscriber does not panic on publish is covered in publish.rs by
 //! returns_false_when_no_subscribers.
 
 mod common;

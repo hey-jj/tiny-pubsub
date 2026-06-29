@@ -13,8 +13,8 @@ fn lists_one_matching_topic() {
     assert_eq!(bus.get_subscriptions(&topic).len(), 1);
 }
 
-// Returns every prefix-matching topic name in insertion order. The source suite
-// never exercises the multi-topic case, so pin it here.
+// Returns every prefix-matching topic name in insertion order. Cover the
+// multi-topic case.
 #[test]
 fn lists_all_matching_topics_in_insertion_order() {
     let bus: PubSub<String> = PubSub::new();
