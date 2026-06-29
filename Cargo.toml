@@ -1,0 +1,10 @@
+[package]
+name = "tiny-pubsub"
+version = "0.1.0"
+edition = "2021"
+description = "in-process hierarchical-topic pub/sub message bus"
+license = "MIT"
+repository = "https://github.com/hey-jj/tiny-pubsub"
+readme = "README.md"
+
+[dependencies]
