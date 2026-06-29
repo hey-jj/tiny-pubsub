@@ -79,13 +79,14 @@ runs.
 
 ## Removing subscriptions
 
-- `unsubscribe(&token)` removes one subscription.
+- `unsubscribe(&token)` removes one subscription. It returns the token on a
+  match, `None` otherwise.
 - `unsubscribe_topic(topic)` removes a topic and every descendant, by string
-  prefix.
-- `unsubscribe_subscription(&sub)` removes every token a `subscribe_handle` call
-  produced. This is the handle-keyed stand-in for removal by function identity,
-  which Rust closures cannot support.
+  prefix. It returns `true` when the prefix matched a topic.
 - `clear_subscriptions(prefix)` and `clear_all_subscriptions()` clear in bulk.
+
+Rust closures cannot be compared by identity, so removal by function value has
+no analogue. The token covers single-subscription removal.
 
 ## Panics during delivery
 

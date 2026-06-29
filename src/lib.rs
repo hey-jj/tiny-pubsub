@@ -52,7 +52,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 
 /// The wildcard topic. A subscriber here receives every published message.
-pub const ALL_SUBSCRIBING: &str = "*";
+pub const WILDCARD: &str = "*";
 
 /// A handle to one subscription, returned by [`PubSub::subscribe`].
 ///
@@ -76,31 +76,6 @@ impl std::fmt::Display for Token {
     }
 }
 
-/// The outcome of [`PubSub::unsubscribe`].
-///
-/// The four variants map one to one to the four outcomes of the source library:
-/// topic clear returns nothing, a found token returns itself, a removed handle
-/// returns true, and any miss returns false.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Unsubscribed {
-    /// A topic and its descendants were cleared. No token is recoverable.
-    Topic,
-    /// A token matched and was removed. Holds that token.
-    Token(Token),
-    /// A handle matched and at least one subscription was removed.
-    Removed,
-    /// Nothing matched.
-    None,
-}
-
-impl Unsubscribed {
-    /// True for any outcome that removed at least one subscription.
-    #[must_use]
-    pub fn is_some(&self) -> bool {
-        !matches!(self, Unsubscribed::None)
-    }
-}
-
 /// A boxed subscriber callback.
 type Callback<D> = Rc<dyn Fn(&str, &D)>;
 
@@ -108,9 +83,6 @@ type Callback<D> = Rc<dyn Fn(&str, &D)>;
 struct Entry<D> {
     token: Token,
     callback: Callback<D>,
-    /// Identifies the logical handler so [`PubSub::unsubscribe`] can remove
-    /// every token a single [`PubSub::subscribe`] call group shares.
-    handle: u64,
     /// When true, the entry is removed before its first invocation.
     once: bool,
 }
@@ -136,8 +108,6 @@ struct Inner<D> {
     topics: Vec<(String, Topic<D>)>,
     /// Monotonic token counter. Starts at -1 so the first token is `uid_0`.
     last_uid: i64,
-    /// Monotonic handle counter for [`Subscription`] grouping.
-    last_handle: u64,
     /// Pending deferred deliveries, drained by [`PubSub::process_deferred`].
     deferred: Vec<DeferredJob<D>>,
 }
@@ -149,25 +119,14 @@ struct DeferredJob<D> {
     immediate_exceptions: bool,
 }
 
-/// A grouping handle returned by [`PubSub::subscribe`] alongside its token.
+/// Yield `message`, then each ancestor prefix, then the wildcard topic.
 ///
-/// Closures cannot be compared in Rust, so removal by function identity has no
-/// direct analogue. A [`Subscription`] fills that gap. Each
-/// [`PubSub::subscribe`] call produces one subscription. Subscribing the same
-/// logical handler to several topics under one subscription lets you remove
-/// them all at once with [`PubSub::unsubscribe_subscription`].
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Subscription {
-    token: Token,
-    handle: u64,
-}
-
-impl Subscription {
-    /// The token for this subscription.
-    #[must_use]
-    pub fn token(&self) -> &Token {
-        &self.token
-    }
+/// The ancestor prefixes are slices of `message`, so the walk allocates
+/// nothing. For `a.b.c` this yields `a.b.c`, `a.b`, `a`, `*`.
+fn delivery_levels(message: &str) -> impl Iterator<Item = &str> {
+    std::iter::once(message)
+        .chain(message.rmatch_indices('.').map(move |(i, _)| &message[..i]))
+        .chain(std::iter::once(WILDCARD))
 }
 
 /// An in-process hierarchical-topic pub/sub message bus.
@@ -188,6 +147,27 @@ impl<D> Default for PubSub<D> {
     }
 }
 
+impl<D> std::fmt::Debug for PubSub<D> {
+    /// Print topic names with their subscriber counts. Payloads and callbacks
+    /// are never formatted, so `D` need not be `Debug`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let inner = self.inner.borrow();
+        f.debug_struct("PubSub")
+            .field(
+                "topics",
+                &inner
+                    .topics
+                    .iter()
+                    .map(|(name, t)| (name.as_str(), t.entries.len()))
+                    .collect::<Vec<_>>(),
+            )
+            .field("last_uid", &inner.last_uid)
+            .field("pending", &inner.deferred.len())
+            .field("immediate_exceptions", &self.immediate_exceptions.get())
+            .finish()
+    }
+}
+
 impl<D> PubSub<D> {
     /// Create an empty bus.
     #[must_use]
@@ -196,7 +176,6 @@ impl<D> PubSub<D> {
             inner: RefCell::new(Inner {
                 topics: Vec::new(),
                 last_uid: -1,
-                last_handle: 0,
                 deferred: Vec::new(),
             }),
             immediate_exceptions: std::cell::Cell::new(false),
@@ -224,38 +203,17 @@ impl<D> PubSub<D> {
     where
         F: Fn(&str, &D) + 'static,
     {
-        self.subscribe_with_handle(topic.into(), Rc::new(func)).0
+        self.subscribe_entry(topic.into(), Rc::new(func), false)
     }
 
-    /// Subscribe and get back a [`Subscription`] handle as well as the token.
-    ///
-    /// Use the returned subscription with [`PubSub::unsubscribe_subscription`]
-    /// to remove every token tied to this call.
-    pub fn subscribe_handle<F>(&self, topic: impl Into<String>, func: F) -> Subscription
-    where
-        F: Fn(&str, &D) + 'static,
-    {
-        let (token, handle) = self.subscribe_with_handle(topic.into(), Rc::new(func));
-        Subscription { token, handle }
-    }
-
-    /// Subscribe an existing callback under a fresh handle, returning the
-    /// token and handle id.
-    fn subscribe_with_handle(&self, topic: String, callback: Callback<D>) -> (Token, u64) {
-        self.subscribe_entry(topic, callback, false)
-    }
-
-    /// Insert a subscriber entry, optionally marked one-shot.
-    fn subscribe_entry(&self, topic: String, callback: Callback<D>, once: bool) -> (Token, u64) {
+    /// Insert a subscriber entry, optionally marked one-shot. Returns its token.
+    fn subscribe_entry(&self, topic: String, callback: Callback<D>, once: bool) -> Token {
         let mut inner = self.inner.borrow_mut();
-        inner.last_handle += 1;
-        let handle = inner.last_handle;
         inner.last_uid += 1;
         let token = Token(format!("uid_{}", inner.last_uid));
         let entry = Entry {
             token: token.clone(),
             callback,
-            handle,
             once,
         };
         match inner.topics.iter_mut().find(|(name, _)| name == &topic) {
@@ -266,7 +224,7 @@ impl<D> PubSub<D> {
                 inner.topics.push((topic, t));
             }
         }
-        (token, handle)
+        token
     }
 
     /// Subscribe `func` to the wildcard topic `*`. It then runs for every
@@ -275,7 +233,7 @@ impl<D> PubSub<D> {
     where
         F: Fn(&str, &D) + 'static,
     {
-        self.subscribe(ALL_SUBSCRIBING, func)
+        self.subscribe(WILDCARD, func)
     }
 
     /// Subscribe `func` to fire at most once.
@@ -286,7 +244,7 @@ impl<D> PubSub<D> {
     where
         F: Fn(&str, &D) + 'static,
     {
-        self.subscribe_entry(topic.into(), Rc::new(func), true).0
+        self.subscribe_entry(topic.into(), Rc::new(func), true)
     }
 
     /// Publish `data` to `topic` for deferred delivery.
@@ -352,20 +310,11 @@ impl<D> PubSub<D> {
     /// Deliver `data` to every subscriber of `message` and its ancestors,
     /// then the wildcard topic.
     fn deliver(&self, message: &str, data: &D, immediate_exceptions: bool) {
-        // Walk the hierarchy right to left: exact topic, then each ancestor.
-        let mut levels: Vec<String> = vec![message.to_string()];
-        let mut topic = message.to_string();
-        while let Some(pos) = topic.rfind('.') {
-            topic.truncate(pos);
-            levels.push(topic.clone());
-        }
-        levels.push(ALL_SUBSCRIBING.to_string());
-
         // Hold the first caught panic and re-raise it after the whole
         // dispatch, so the remaining subscribers still run.
         let mut held_panic: Option<Box<dyn std::any::Any + Send>> = None;
 
-        for level in &levels {
+        for level in delivery_levels(message) {
             // Snapshot the matched callbacks before invoking any, so a
             // subscriber that mutates the registry mid-delivery cannot skip a
             // peer that was matched for this publish. One-shot entries are
@@ -403,79 +352,43 @@ impl<D> PubSub<D> {
     /// True if `message`, any ancestor, or the wildcard topic has a subscriber.
     fn message_has_subscribers(&self, message: &str) -> bool {
         let inner = self.inner.borrow();
-        let has_direct = |topic: &str| {
+        delivery_levels(message).any(|level| {
             inner
                 .topics
                 .iter()
-                .any(|(name, t)| name == topic && !t.entries.is_empty())
-        };
-        if has_direct(message) || has_direct(ALL_SUBSCRIBING) {
-            return true;
-        }
-        let mut topic = message.to_string();
-        while let Some(pos) = topic.rfind('.') {
-            topic.truncate(pos);
-            if has_direct(&topic) {
-                return true;
-            }
-        }
-        false
+                .any(|(name, t)| name == level && !t.entries.is_empty())
+        })
     }
 
     /// Remove the single subscription identified by `token`.
     ///
-    /// Returns [`Unsubscribed::Token`] with the token if it matched, else
-    /// [`Unsubscribed::None`].
-    pub fn unsubscribe(&self, token: &Token) -> Unsubscribed {
+    /// Returns the token if it matched a live subscription, else `None`. A
+    /// second removal of the same token returns `None`.
+    pub fn unsubscribe(&self, token: &Token) -> Option<Token> {
         let mut inner = self.inner.borrow_mut();
         for (_, t) in inner.topics.iter_mut() {
             if let Some(idx) = t.entries.iter().position(|e| &e.token == token) {
                 t.entries.remove(idx);
-                return Unsubscribed::Token(token.clone());
+                return Some(token.clone());
             }
         }
-        Unsubscribed::None
-    }
-
-    /// Remove every subscription created under `subscription`.
-    ///
-    /// This is the handle-keyed stand-in for removal by function identity.
-    /// Returns [`Unsubscribed::Removed`] if it removed at least one, else
-    /// [`Unsubscribed::None`].
-    pub fn unsubscribe_subscription(&self, subscription: &Subscription) -> Unsubscribed {
-        let mut inner = self.inner.borrow_mut();
-        let mut removed = false;
-        for (_, t) in inner.topics.iter_mut() {
-            let before = t.entries.len();
-            t.entries.retain(|e| e.handle != subscription.handle);
-            if t.entries.len() != before {
-                removed = true;
-            }
-        }
-        if removed {
-            Unsubscribed::Removed
-        } else {
-            Unsubscribed::None
-        }
+        None
     }
 
     /// Remove a topic and every descendant topic, by string prefix.
     ///
-    /// Returns [`Unsubscribed::Topic`] if `topic` names an existing topic or a
-    /// prefix of one, else [`Unsubscribed::None`]. Matching is a raw string
-    /// prefix, not dot-boundary aware. `clear_subscriptions("a")` therefore
-    /// removes `a`, `a.b`, and `ab` alike.
-    pub fn unsubscribe_topic(&self, topic: &str) -> Unsubscribed {
+    /// Returns `true` if `topic` names an existing topic or a prefix of one,
+    /// else `false`. Matching is a raw string prefix, not dot-boundary aware.
+    /// `unsubscribe_topic("a")` therefore removes `a`, `a.b`, and `ab` alike.
+    pub fn unsubscribe_topic(&self, topic: &str) -> bool {
         let is_topic = {
             let inner = self.inner.borrow();
             inner.topics.iter().any(|(name, _)| name.starts_with(topic))
         };
         if is_topic {
             self.clear_subscriptions(topic);
-            Unsubscribed::Topic
-        } else {
-            Unsubscribed::None
         }
+        is_topic
     }
 
     /// Empty the whole registry. Does not reset the token counter.

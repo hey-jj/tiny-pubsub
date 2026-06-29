@@ -1,21 +1,19 @@
-//! Unsubscribe behavior across all three modes: token, handle, and topic.
+//! Unsubscribe behavior in both modes: by token and by topic.
 //!
 //! Rust closures cannot be compared by identity, so removal by function value
-//! has no direct analogue. A Subscription handle stands in for it: each
-//! subscribe_handle call yields a handle, and unsubscribe_subscription removes
-//! every token tied to that handle. The token and topic modes need no
-//! adaptation.
+//! has no analogue. The token covers single-subscription removal. The topic
+//! mode removes a topic and all its descendants by string prefix.
 
 mod common;
 
 use common::{unique_string, Spy};
-use tiny_pubsub::{PubSub, Unsubscribed};
+use tiny_pubsub::PubSub;
 
 #[test]
 fn token_mode_returns_token_when_successful() {
     let bus: PubSub<String> = PubSub::new();
     let token = bus.subscribe(unique_string(), |_, _| {});
-    assert_eq!(bus.unsubscribe(&token), Unsubscribed::Token(token.clone()));
+    assert_eq!(bus.unsubscribe(&token), Some(token.clone()));
 }
 
 #[test]
@@ -26,30 +24,41 @@ fn token_mode_returns_none_when_unsuccessful() {
 
     // Remove once, then a second removal of the same token finds nothing.
     bus.unsubscribe(&token);
-    assert_eq!(bus.unsubscribe(&token), Unsubscribed::None);
+    assert_eq!(bus.unsubscribe(&token), None);
 }
 
 #[test]
-fn handle_mode_returns_removed_when_successful() {
+fn token_mode_removes_only_its_own_subscription() {
     let bus: PubSub<String> = PubSub::new();
-    let sub = bus.subscribe_handle(unique_string(), |_, _| {});
-    assert_eq!(bus.unsubscribe_subscription(&sub), Unsubscribed::Removed);
+    let topic = unique_string();
+    let spy_keep = Spy::new();
+    let spy_drop = Spy::new();
+    bus.subscribe(&topic, spy_keep.subscriber());
+    let drop_token = bus.subscribe(&topic, spy_drop.subscriber());
+
+    bus.unsubscribe(&drop_token);
+
+    let _ = bus.publish_sync(&topic, unique_string());
+    assert!(spy_keep.called());
+    assert!(!spy_drop.called());
 }
 
 #[test]
-fn handle_mode_removes_all_then_returns_none_second_time() {
+fn token_removal_leaves_other_topics_intact() {
     let bus: PubSub<String> = PubSub::new();
-    let message = unique_string();
+    let topic_a = unique_string();
+    let topic_b = unique_string();
+    let spy_a = Spy::new();
+    let spy_b = Spy::new();
+    let token_a = bus.subscribe(&topic_a, spy_a.subscriber());
+    bus.subscribe(&topic_b, spy_b.subscriber());
 
-    // One handle, subscribed three times under that same handle id is not how
-    // the API groups, so model the source intent: a handle removes every token
-    // it produced. Here a single subscribe_handle plus extra plain subscribes
-    // of the same logical work. The handle removes its own token.
-    let sub = bus.subscribe_handle(&message, |_, _| {});
+    bus.unsubscribe(&token_a);
 
-    assert_eq!(bus.unsubscribe_subscription(&sub), Unsubscribed::Removed);
-    // Second removal finds nothing.
-    assert_eq!(bus.unsubscribe_subscription(&sub), Unsubscribed::None);
+    // The other topic key survives and its subscriber still fires.
+    assert_eq!(bus.get_subscriptions(&topic_b), vec![topic_b.clone()]);
+    let _ = bus.publish_sync(&topic_b, unique_string());
+    assert!(spy_b.called());
 }
 
 #[test]
@@ -61,12 +70,18 @@ fn topic_mode_clears_exact_matches() {
     bus.subscribe(&topic, spy1.subscriber());
     bus.subscribe(&topic, spy2.subscriber());
 
-    bus.unsubscribe_topic(&topic);
+    assert!(bus.unsubscribe_topic(&topic));
 
     let _ = bus.publish_sync(&topic, unique_string());
 
     assert!(!spy1.called());
     assert!(!spy2.called());
+}
+
+#[test]
+fn topic_mode_returns_false_on_empty_bus() {
+    let bus: PubSub<String> = PubSub::new();
+    assert!(!bus.unsubscribe_topic(&unique_string()));
 }
 
 #[test]
@@ -134,6 +149,17 @@ fn parent_topic_clears_child_subscriptions() {
 
     assert!(!spy_b.called());
     assert!(!spy_c.called());
+}
+
+#[test]
+fn empty_prefix_clears_every_topic() {
+    let bus: PubSub<String> = PubSub::new();
+    bus.subscribe("a", |_, _| {});
+    bus.subscribe("b", |_, _| {});
+
+    // "" is a prefix of every topic, so it clears all of them.
+    assert!(bus.unsubscribe_topic(""));
+    assert!(bus.get_subscriptions("").is_empty());
 }
 
 #[test]

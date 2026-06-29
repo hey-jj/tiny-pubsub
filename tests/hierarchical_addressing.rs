@@ -145,19 +145,12 @@ fn still_calls_all_parents_when_middle_child_unsubscribed() {
 
 #[test]
 fn unsubscribe_returns_tokens_for_namespaced_messages() {
-    use tiny_pubsub::Unsubscribed;
     let bus: PubSub<String> = PubSub::new();
     let token1 = bus.subscribe("playlist.music", |_, _| {});
     let token2 = bus.subscribe("playlist.music.jazz", |_, _| {});
 
-    assert_eq!(
-        bus.unsubscribe(&token1),
-        Unsubscribed::Token(token1.clone())
-    );
-    assert_eq!(
-        bus.unsubscribe(&token2),
-        Unsubscribed::Token(token2.clone())
-    );
+    assert_eq!(bus.unsubscribe(&token1), Some(token1.clone()));
+    assert_eq!(bus.unsubscribe(&token2), Some(token2.clone()));
 }
 
 #[test]
