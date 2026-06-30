@@ -7,6 +7,6 @@ license = "MIT"
 repository = "https://github.com/hey-jj/tiny-pubsub"
 readme = "README.md"
 keywords = ["pubsub", "publish-subscribe", "event-bus", "messaging", "observer"]
-categories = ["concurrency", "rust-patterns", "data-structures"]
+categories = ["rust-patterns", "data-structures"]
 
 [dependencies]
