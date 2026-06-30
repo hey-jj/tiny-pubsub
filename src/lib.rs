@@ -122,11 +122,13 @@ struct DeferredJob<D> {
 /// Yield `message`, then each ancestor prefix, then the wildcard topic.
 ///
 /// The ancestor prefixes are slices of `message`, so the walk allocates
-/// nothing. For `a.b.c` this yields `a.b.c`, `a.b`, `a`, `*`.
+/// nothing. For `a.b.c` this yields `a.b.c`, `a.b`, `a`, `*`. Publishing `*`
+/// itself yields it once, so wildcard subscribers fire once.
 fn delivery_levels(message: &str) -> impl Iterator<Item = &str> {
+    let trailing_wildcard = (message != WILDCARD).then_some(WILDCARD);
     std::iter::once(message)
         .chain(message.rmatch_indices('.').map(move |(i, _)| &message[..i]))
-        .chain(std::iter::once(WILDCARD))
+        .chain(trailing_wildcard)
 }
 
 /// An in-process hierarchical-topic pub/sub message bus.

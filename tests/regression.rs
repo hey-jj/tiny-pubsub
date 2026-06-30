@@ -37,6 +37,19 @@ fn notifies_individual_subscriber_with_no_ancestors() {
     assert!(spy.called_once());
 }
 
+// Publishing the wildcard topic delivers to a wildcard subscriber exactly once,
+// not twice.
+#[test]
+fn publishing_wildcard_delivers_once() {
+    let bus: PubSub<String> = PubSub::new();
+    let spy = Spy::new();
+    bus.subscribe_all(spy.subscriber());
+
+    assert!(bus.publish_sync("*", String::new()));
+
+    assert!(spy.called_once());
+}
+
 // Issue 54: a subscriber that removes its own token during delivery must not
 // cause later subscribers to be skipped.
 #[test]
