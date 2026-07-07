@@ -25,8 +25,8 @@
 //!
 //! Default mode catches a panicking subscriber, finishes delivery to the rest,
 //! then re-raises the first panic after the dispatch. Set
-//! [`PubSub::immediate_exceptions`] to `true` to stop at the first panic and
-//! let it propagate, skipping the remaining subscribers.
+//! [`PubSub::set_immediate_exceptions`] to `true` to stop at the first panic
+//! and let it propagate, skipping the remaining subscribers.
 //!
 //! # Example
 //!
