@@ -1,6 +1,6 @@
 [package]
 name = "tiny-pubsub"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "In-process publish/subscribe message bus with hierarchical topics and deferred or synchronous delivery."
 license = "MIT"
